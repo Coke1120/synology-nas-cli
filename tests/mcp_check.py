@@ -107,7 +107,8 @@ assert rpc("ping")["result"] == {}
 
 tools = {x["name"]: x for x in rpc("tools/list")["result"]["tools"]}
 assert set(tools) == {"setup", "doctor", "whoami", "status", "health", "net", "services", "logs", "alert",
-                      "incident_audit", "incident_fix", "pkg_list", "volume_list", "tailscale_status", "api_read"}, set(tools)
+                      "incident_audit", "incident_fix", "pkg_list", "volume_list", "tailscale_status", "api_read",
+                      "file_list", "file_download"}, set(tools)
 for x in tools.values():
     low = x["description"].lower()
     assert not any(w in low for w in ("refused", "must not", "never ", "only the user", "be careful", "caution")), x["description"]
@@ -146,6 +147,32 @@ assert json.loads(rd["content"][0]["text"])["model"] == "DS000"
 before = len(sessions[0].sent)
 wr = call("api_read", api="SYNO.Core.FileServ.SMB", method="set", params={"smb_min_protocol": 0})
 assert wr["isError"] and "is a write method" in wr["content"][0]["text"] and len(sessions[0].sent) == before
+
+# File Station is disabled unless the operator explicitly allowlists share names.
+from nas import files as nas_files
+from nas.errors import NasError
+os.environ.pop("NAS_FILE_ALLOWED_SHARES", None)
+try:
+    nas_files._check_path("/Documents/test.pdf")
+    assert False, "file access must fail closed"
+except NasError:
+    pass
+os.environ["NAS_FILE_ALLOWED_SHARES"] = "Documents"
+assert nas_files._check_path("/Documents/test.pdf") == "/Documents/test.pdf"
+for bad in ("/", "/Other/a", "/Documents/../Other/a", "/Documents//a", "/Documents/./a",
+            "/Documents/dir\\\\file", "Documents/a"):
+    try:
+        nas_files._check_path(bad)
+        assert False, bad
+    except NasError:
+        pass
+
+isolated = mcp.Server(factory, files_only=True)
+assert {t["name"] for t in mcp.tool_list(files_only=True)} == {"file_list", "file_download"}
+assert isolated.call_tool("incident_fix", {})["isError"], "administrative tools are blocked"
+assert isolated.call_tool("api_read", {"api": "SYNO.FileStation.Delete", "method": "delete"})["isError"]
+assert isolated.call_tool("file_download", {"path": "/Other/nope"})["isError"]
+os.environ.pop("NAS_FILE_ALLOWED_SHARES", None)
 
 # argument and protocol errors
 assert rpc("tools/call", {"name": "status", "arguments": {"x": 1}})["error"]["code"] == -32602

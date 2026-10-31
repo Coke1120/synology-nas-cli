@@ -679,7 +679,7 @@ class PasswordBackend:
         return {"ok": False, "error": r.get("error"), "version": version}
 
 
-    def download_to(self, fs_path: str, local_path: str, timeout: float = 600) -> int:
+    def download_to(self, fs_path: str, local_path: str, timeout: float = 600, max_bytes: int = None) -> int:
         """Stream one File Station file (e.g. /share/dir/file) to a new local file (mode 600). Returns bytes."""
         if not self._sid:
             self.login()
@@ -690,18 +690,43 @@ class PasswordBackend:
         req.add_header("Cookie", f"id={self._sid}")
         req.add_header("Origin", origin)
         n = 0
-        with self._open(req, timeout) as r:
-            ctype = r.headers.get("Content-Type", "")
-            first = r.read(1 << 20)
-            if ctype.startswith("application/json") and first.lstrip().startswith(b'{"error"'):
-                raise NasError(f"download {fs_path}: {first[:200].decode('utf-8', 'replace')}")
-            fd = os.open(local_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as out:
-                block = first
-                while block:
-                    out.write(block)
-                    n += len(block)
-                    block = r.read(1 << 20)
+        created = False
+        try:
+            with self._open(req, timeout) as r:
+                ctype = r.headers.get("Content-Type", "")
+                first = r.read(1 << 20)
+                if ctype.startswith("application/json") and first.lstrip().startswith(b'{"error"'):
+                    raise NasError(f"download {fs_path}: {first[:200].decode('utf-8', 'replace')}")
+                fd = os.open(local_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                created = True
+                try:
+                    out = os.fdopen(fd, "wb")
+                except BaseException:
+                    os.close(fd)
+                    raise
+                # The cleanup scope includes buffered flush/close and response close.
+                with out:
+                    block = first
+                    while block:
+                        if max_bytes is not None and n + len(block) > max_bytes:
+                            raise NasError("download exceeds NAS_FILE_MAX_BYTES")
+                        out.write(block)
+                        n += len(block)
+                        block = r.read(1 << 20)
+        except BaseException as exc:
+            if created:
+                try:
+                    os.unlink(local_path)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    raise NasError("download failed; could not remove partial local file") from exc
+            if isinstance(exc, FileExistsError):
+                raise NasError("download destination already exists; refusing to overwrite") from exc
+            if isinstance(exc, (OSError, http.client.HTTPException)):
+                # Transport exception text may contain a URL or session details.
+                raise NasError(f"download failed ({type(exc).__name__})") from exc
+            raise
         return n
 
     def http_raw(self, path: str, data: bytes | None = None, headers: dict | None = None,
@@ -804,6 +829,11 @@ class Session:
         if not hasattr(self.backend, "http_raw"):
             raise NasError(f"the {self.backend.name} backend cannot reach package web UIs; use --backend password")
         return self.backend.http_raw(*a, **kw)
+
+    def download_to(self, *a, **kw) -> int:
+        if not hasattr(self.backend, "download_to"):
+            raise NasError("file download requires --backend password")
+        return self.backend.download_to(*a, **kw)
 
     def upload(self, *a, **kw) -> dict:
         if not hasattr(self.backend, "upload"):
