@@ -812,6 +812,11 @@ class Session:
             raise NasError(f"the {self.backend.name} backend cannot reach package web UIs; use --backend password")
         return self.backend.http_raw(*a, **kw)
 
+    def download_to(self, *a, **kw) -> int:
+        if not hasattr(self.backend, "download_to"):
+            raise NasError("file download requires --backend password")
+        return self.backend.download_to(*a, **kw)
+
     def upload(self, *a, **kw) -> dict:
         if not hasattr(self.backend, "upload"):
             raise NasError(f"the {self.backend.name} backend cannot upload files; use --backend password")
