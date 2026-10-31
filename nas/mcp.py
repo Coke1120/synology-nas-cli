@@ -18,7 +18,7 @@ import os
 import sys
 import traceback
 
-from . import __version__, alert, commands, config, incident, manage
+from . import __version__, alert, commands, config, files, incident, manage
 from .errors import NasError, set_no_input
 
 PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
@@ -129,6 +129,14 @@ TOOLS = {
                     lambda a: ["volume", "list"]),
     "tailscale_status": ("Tailscale package status, tailnet addresses and key expiry.", _obj(), READ,
                          lambda a: ["tailscale", "status"]),
+    "file_list": ("List up to 200 entries in an explicitly allowed DSM share. Requires NAS_FILE_ALLOWED_SHARES.",
+                 _obj({"path": {"type": "string"}, "offset": {"type": "integer", "minimum": 0},
+                       "limit": {"type": "integer", "minimum": 1}}, ["path"]), READ,
+                 lambda a: ["file", "list", a["path"]] + _opt(a, "offset") + _opt(a, "limit")),
+    "file_download": ("Stream a regular file from an explicitly allowed DSM share to the MCP host without overwriting. "
+                      "Requires NAS_FILE_ALLOWED_SHARES; NAS_FILE_MAX_BYTES defaults to 100 MiB.",
+                      _obj({"path": {"type": "string"}}, ["path"]), READ,
+                      lambda a: ["file", "download", a["path"]]),
     "api_read": ("Call a DSM Web API read method (get, list, load, info, query, status, ...) and return its data.",
                  _obj({"api": {"type": "string", "description": "e.g. SYNO.Core.System"},
                        "method": {"type": "string", "description": "e.g. info"},
@@ -154,9 +162,9 @@ def _csv(a: dict, key: str) -> list:
     return [f"--{key}", v if isinstance(v, str) else ",".join(v)]
 
 
-def tool_list() -> list:
+def tool_list(files_only: bool = False) -> list:
     return [{"name": n, "title": n.replace("_", " "), "description": d, "inputSchema": s, "annotations": ann}
-            for n, (d, s, ann, _) in TOOLS.items()]
+            for n, (d, s, ann, _) in TOOLS.items() if not files_only or n in ("file_list", "file_download")]
 
 
 def _check_args(schema: dict, args) -> str | None:
@@ -253,10 +261,11 @@ def setup_changes(a: dict, lan: list | None = None) -> list:
 
 
 class Server:
-    def __init__(self, session_factory, auto_confirm: bool = False, lan_origins: list | None = None):
+    def __init__(self, session_factory, auto_confirm: bool = False, lan_origins: list | None = None, files_only: bool = False):
         self.session_factory = session_factory
         self.session = None
         self.auto_confirm = auto_confirm
+        self.files_only = files_only
         self.lan_origins = lan_origins  # `nas mcp --lan-origin`: in effect for this server
 
     def _session(self):
@@ -275,6 +284,8 @@ class Server:
     def call_tool(self, name: str, args: dict) -> dict:
         from . import onboard
         from .cli import COMMANDS, parse_args
+        if self.files_only and name not in ("file_list", "file_download"):
+            return self._error("tool disabled in --files-only mode", 2)
         if name == "setup":
             for k in ("password_source", "otp_source"):
                 if str(args.get(k, "")).startswith("command:"):
@@ -309,6 +320,8 @@ class Server:
                     self.close()
                     if result[1].get("written"):
                         config.load(result[1]["config"])  # the next tool uses what setup wrote
+                elif ns.cmd == "file":
+                    result = (files.file_list if ns.action == "list" else files.file_download)(self._session(), ns)
                 elif ns.cmd == "doctor":
                     self.close()
                     result = onboard.doctor(ns)
@@ -342,10 +355,10 @@ class Server:
         if method == "ping":
             return _rpc_result(mid, {})
         if method == "tools/list":
-            return _rpc_result(mid, {"tools": tool_list()})
+            return _rpc_result(mid, {"tools": tool_list(self.files_only)})
         if method == "tools/call":
             name, args = params.get("name"), params.get("arguments") or {}
-            if name not in TOOLS:
+            if name not in TOOLS or (self.files_only and name not in ("file_list", "file_download")):
                 return _rpc_error(mid, -32602, f"unknown tool {name!r}")
             bad = _check_args(TOOLS[name][1], args)
             if bad:
@@ -366,10 +379,10 @@ def _rpc_error(mid, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": message}}
 
 
-def serve(infile, outfile, session_factory, auto_confirm: bool = False, lan_origins: list | None = None) -> int:
+def serve(infile, outfile, session_factory, auto_confirm: bool = False, lan_origins: list | None = None, files_only: bool = False) -> int:
     """Answer requests from `infile` until EOF."""
     set_no_input(True)
-    server = Server(session_factory, auto_confirm, lan_origins)
+    server = Server(session_factory, auto_confirm, lan_origins, files_only)
 
     def send(m):
         outfile.write(json.dumps(m, ensure_ascii=False) + "\n")
