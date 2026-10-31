@@ -9,7 +9,7 @@ import re
 import sys
 import traceback
 
-from . import __version__, alert, commands, config, incident, manage, onboard, selfmon, upgrade
+from . import __version__, alert, commands, config, files, incident, manage, onboard, selfmon, upgrade
 from .backends import NasError, PasswordBackend, open_session
 from .errors import set_no_input
 from .credentials import Credentials
@@ -39,6 +39,7 @@ COMMANDS = {
     "config": (None, "config init (write an example file) | config show (effective config, secrets masked)"),
     "trust": (None, "list the DSM certificates trusted on first use; --reset ORIGIN forgets one"),
     "mcp": (None, "Model Context Protocol server on stdin/stdout (for AI agents; see docs/MCP.md)"),
+    "file": (None, "read-only File Station list | download (requires NAS_FILE_ALLOWED_SHARES)"),
     "api": (commands.raw_api, "raw DSM API call (writes need --allow-write)"),
 }
 
@@ -272,6 +273,11 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "config":
             sp.add_argument("action", choices=["init", "show"])
             sp.add_argument("--force", action="store_true", help="init: overwrite an existing file")
+        if name == "file":
+            sp.add_argument("action", choices=["list", "download"])
+            sp.add_argument("path", metavar="NAS_PATH")
+            sp.add_argument("--offset", type=int, default=0)
+            sp.add_argument("--limit", type=int, default=100)
         if name == "api":
             sp.add_argument("api_name", metavar="NAME", help="e.g. SYNO.Core.System")
             sp.add_argument("method", metavar="METHOD", help="e.g. info")
@@ -463,7 +469,7 @@ def main(argv: list[str] | None = None) -> int:
             return e.exit_code
         print(json.dumps(data, ensure_ascii=False, indent=2) if args.json else _paint("\n".join(lines)))
         return 0
-    fn = COMMANDS[args.cmd][0]
+    fn = (files.file_list if args.action == "list" else files.file_download) if args.cmd == "file" else COMMANDS[args.cmd][0]
     pushing = args.cmd == "alert" and bool(args.push)
     if pushing:
         # one run at a time: the scheduler can start a run while a slow one is still going
