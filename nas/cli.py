@@ -263,6 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("--config", metavar="PATH", help="config file to write (default: NAS_CONFIG or "
                                                              "~/.config/synology-nas-cli/config.json)")
         if name == "mcp":
+            sp.add_argument("--files-only", action="store_true", help="expose only allowlisted file list/download tools")
             sp.add_argument("--auto-confirm", action="store_true",
                             help="incident_fix applies the plan when a call has no confirm argument "
                                  "(confirm: false stays a dry run; NAS_YES and assume_yes do not apply to MCP)")
@@ -442,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "mcp":
         from .mcp import serve
         return serve(sys.stdin, sys.stdout, lambda: open_session(args.backend, origins, lan),
-                     auto_confirm=args.auto_confirm, lan_origins=lan)
+                     auto_confirm=args.auto_confirm, lan_origins=lan, **({'files_only': True} if args.files_only else {}))
     if args.cmd in NO_SESSION:
         try:
             if args.cmd == "config":
