@@ -679,7 +679,7 @@ class PasswordBackend:
         return {"ok": False, "error": r.get("error"), "version": version}
 
 
-    def download_to(self, fs_path: str, local_path: str, timeout: float = 600) -> int:
+    def download_to(self, fs_path: str, local_path: str, timeout: float = 600, max_bytes: int = None) -> int:
         """Stream one File Station file (e.g. /share/dir/file) to a new local file (mode 600). Returns bytes."""
         if not self._sid:
             self.login()
@@ -698,10 +698,17 @@ class PasswordBackend:
             fd = os.open(local_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as out:
                 block = first
-                while block:
-                    out.write(block)
-                    n += len(block)
-                    block = r.read(1 << 20)
+                try:
+                    while block:
+                        if max_bytes is not None and n + len(block) > max_bytes:
+                            raise NasError("download exceeds NAS_FILE_MAX_BYTES")
+                        out.write(block)
+                        n += len(block)
+                        block = r.read(1 << 20)
+                except BaseException:
+                    out.close()
+                    os.unlink(local_path)
+                    raise
         return n
 
     def http_raw(self, path: str, data: bytes | None = None, headers: dict | None = None,
