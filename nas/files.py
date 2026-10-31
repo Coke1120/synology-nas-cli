@@ -97,7 +97,10 @@ def file_download(session, args):
 
     root = os.path.abspath(os.path.expanduser(
         os.environ.get("NAS_FILE_DOWNLOAD_DIR", DEFAULT_DOWNLOAD_DIR)))
-    os.makedirs(root, mode=0o700, exist_ok=True)
+    try:
+        os.makedirs(root, mode=0o700, exist_ok=True)
+    except OSError as exc:
+        raise NasError(f"cannot create download directory ({type(exc).__name__})") from exc
     if os.path.islink(root) or not os.path.isdir(root):
         raise NasError("NAS_FILE_DOWNLOAD_DIR must be a real local directory")
     destination = os.path.join(root, path.split("/")[-1])

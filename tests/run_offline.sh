@@ -3,7 +3,7 @@
 # when `uv python find 3.8` finds one, with Python 3.8 too (DSM 7 ships Python 3.8).
 set -u
 cd "$(dirname "$0")/.."
-tests="offline_check config_check credentials_check incident_check push_check tls_check mcp_check schema_check ioc_check onboard_check contain_check rescue_check"
+tests="offline_check config_check credentials_check incident_check push_check tls_check files_check mcp_check schema_check ioc_check onboard_check contain_check rescue_check"
 pys=(python3)
 if command -v uv >/dev/null 2>&1 && py38=$(uv python find 3.8 2>/dev/null) && [ -n "$py38" ]; then
   pys+=("$py38")
