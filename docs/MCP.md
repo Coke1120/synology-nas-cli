@@ -27,9 +27,48 @@
 | `pkg_list` | - | `nas --json pkg list` | no |
 | `volume_list` | - | `nas --json volume list` | no |
 | `tailscale_status` | - | `nas --json tailscale status` | no |
+| `file_list` | `path`, `offset`, `limit` | `nas --json file list PATH` | no |
+| `file_download` | `path` | `nas --json file download PATH` | writes a new local file only |
 | `api_read` | `api` (string, required), `method` (string, required), `params` (object), `version` (int) | `nas --json api API METHOD k=v ...` | no (writes: `nas api ... --allow-write` on the command line) |
 
 Unknown arguments or wrong types are a JSON-RPC error `-32602`. `tools/list` returns each tool's `inputSchema` and `annotations` (`readOnlyHint`, `destructiveHint`).
+
+## Restricted File Station mode (opt-in)
+
+For AI agents that need to browse or download documents without administrative tools:
+
+```bash
+export NAS_FILE_ALLOWED_SHARES=Documents,Audit
+export NAS_FILE_MAX_BYTES=104857600
+export NAS_FILE_DOWNLOAD_DIR="$HOME/nas-downloads"
+nas mcp --backend password --files-only
+```
+
+This mode exposes **only** `file_list` and `file_download`. All other MCP tools,
+including `api_read`, `setup` and `incident_fix`, are hidden **and rejected
+server-side**. No remote delete, rename, move, or upload endpoint is exposed.
+You must set `NAS_FILE_ALLOWED_SHARES`; otherwise both file operations fail closed.
+`file_list` pages through at most 200 entries. `file_download` streams a single
+regular file into the **machine hosting MCP**, using an exclusive, private (0600)
+local file; it never overwrites and removes partial downloads on failure.
+The 100 MiB default download cap can be reduced through `NAS_FILE_MAX_BYTES`.
+A file with the same local filename as another already downloaded file is refused,
+rather than replaced.
+
+**Security boundary:** use a separate DSM user with read-only ACLs on precisely
+the required shares. An MCP allowlist is defense in depth, not a replacement for
+Synology account permissions; File Station may contain symlinks and mounted folders,
+so do not grant the service account access beyond the intended read-only content.
+Keep the MCP server local or within a trusted Tailscale environment. Files may
+contain sensitive client data and stay on the agent host. This restricted mode
+does not apply to the unrestricted `nas mcp` server or the general-purpose CLI.
+
+CLI equivalents (require the same allowlist):
+
+```bash
+nas --json file list /Documents --limit 100 --offset 0
+nas --json file download /Documents/report.pdf
+```
 
 ## Client configuration
 
